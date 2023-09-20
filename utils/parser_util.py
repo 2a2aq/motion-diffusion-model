@@ -70,6 +70,8 @@ def add_diffusion_options(parser):
     group.add_argument("--diffusion_steps", default=1000, type=int,
                        help="Number of diffusion steps (denoted T in the paper)")
     group.add_argument("--sigma_small", default=True, type=bool, help="Use smaller sigma values.")
+    # 0920 wonjae
+    group.add_argument("--edm", default=False, type=bool, help="If True, use EDM diffusion process")
 
 
 def add_model_options(parser):
@@ -93,6 +95,9 @@ def add_model_options(parser):
     group.add_argument("--unconstrained", action='store_true',
                        help="Model is trained unconditionally. That is, it is constrained by neither text nor action. "
                             "Currently tested on HumanAct12 only.")
+    # 0920 wonjae
+    group.add_argument("--continuous_embed", default=False, type=bool, 
+                       help="continuous time embedding model for EDM model")
 
 
 

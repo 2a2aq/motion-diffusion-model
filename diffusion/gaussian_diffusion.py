@@ -134,6 +134,8 @@ class GaussianDiffusion:
         lambda_root_vel=0.,
         lambda_vel_rcxyz=0.,
         lambda_fc=0.,
+        # 0920 wonjae - add config
+        edm = False,
     ):
         self.model_mean_type = model_mean_type
         self.model_var_type = model_var_type
@@ -178,6 +180,9 @@ class GaussianDiffusion:
         self.sqrt_recip_alphas_cumprod = np.sqrt(1.0 / self.alphas_cumprod)
         self.sqrt_recipm1_alphas_cumprod = np.sqrt(1.0 / self.alphas_cumprod - 1)
 
+        # 0918 wonjae - add sigma schedule
+        self.sigmas = get_sigmas(self.num_timesteps)
+
         # calculations for posterior q(x_{t-1} | x_t, x_0)
         self.posterior_variance = (
             betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
@@ -197,6 +202,10 @@ class GaussianDiffusion:
         )
 
         self.l2_loss = lambda a, b: (a - b) ** 2  # th.nn.MSELoss(reduction='none')  # must be None for handling mask later on.
+
+        # 0918 wonjae  TODO delete hardcoded feature
+        self.edm = edm
+        self.sigma_data = 0.5
 
     def masked_l2(self, a, b, mask):
         # assuming a.shape == b.shape == bs, J, Jdim, seqlen
@@ -247,6 +256,27 @@ class GaussianDiffusion:
         return (
             _extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
             + _extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape)
+            * noise
+        )
+    
+    # 0919 wonjae - diffuser for edm
+    def q_sample_edm(self, x_start, t, noise=None):
+        """
+        Diffuse the dataset for a given number of diffusion steps.
+
+        In other words, sample from q(x_t | x_0).
+
+        :param x_start: the initial dataset batch.
+        :param t: the number of diffusion steps (minus 1). Here, 0 means one step.
+        :param noise: if specified, the split-out normal noise.
+        :return: A noisy version of x_start.
+        """
+        if noise is None:
+            noise = th.randn_like(x_start)
+        assert noise.shape == x_start.shape
+        return (
+            x_start
+            + _extract_into_tensor(self.sigmas, t, x_start.shape)
             * noise
         )
 
@@ -688,10 +718,16 @@ class GaussianDiffusion:
         if device is None:
             device = next(model.parameters()).device
         assert isinstance(shape, (tuple, list))
+        #TODO generate noise
         if noise is not None:
             img = noise
         else:
             img = th.randn(*shape, device=device)
+
+        # 0928 wonjae - expand x_T in edm mode
+        # TODO - delete hardcoded sigma_max
+        if self.edm:
+            img = img * 80.0
 
         if skip_timesteps and init_image is None:
             init_image = th.zeros_like(img)
@@ -708,26 +744,81 @@ class GaussianDiffusion:
 
             indices = tqdm(indices)
 
-        for i in indices:
-            t = th.tensor([i] * shape[0], device=device)
-            if randomize_class and 'y' in model_kwargs:
-                model_kwargs['y'] = th.randint(low=0, high=model.num_classes,
-                                               size=model_kwargs['y'].shape,
-                                               device=model_kwargs['y'].device)
-            with th.no_grad():
-                sample_fn = self.p_sample_with_grad if cond_fn_with_grad else self.p_sample
-                out = sample_fn(
-                    model,
-                    img,
-                    t,
-                    clip_denoised=clip_denoised,
-                    denoised_fn=denoised_fn,
-                    cond_fn=cond_fn,
-                    model_kwargs=model_kwargs,
-                    const_noise=const_noise,
+        # 0919 wonjae - add heun sampler
+        # TODO consider stochastic sampling
+        # TODO consider adding more diverse sampling methods
+        ################################################################################
+        if self.edm:
+            #TODO delete hardcoded values
+            s_churn = 0.0
+            s_tmin = 0.0
+            s_tmax = float("inf")
+            s_noise = 1.0
+            ##########
+            #TODO implement less inference step results
+            sigmas = th.from_numpy(self.sigmas).to(device=device)[indices].float()
+            sigmas = torch.cat([sigmas, sigmas.new_zeros([1])])
+            x = img
+            ##########
+            s_in = img.new_ones([img.shape[0]])
+            indices = range(len(sigmas) - 1)
+            if progress:
+                from tqdm.auto import tqdm
+
+                indices = tqdm(indices)
+            
+            for i in indices:
+                gamma = (
+                    min(s_churn / (len(sigmas) - 1), 2**0.5 - 1)
+                    if s_tmin <= sigmas[i] <= s_tmax
+                    else 0.0
                 )
+                eps = torch.randn_like(x, device=x.device) * s_noise
+                sigma_hat = sigmas[i] * (gamma + 1)
+                if gamma > 0:
+                    x = x + eps * (sigma_hat**2 - sigmas[i] ** 2) ** 0.5
+                sigma_tensor = th.tensor(sigma_hat * s_in, device=device)
+                denoised = self.model_edm(model, x, sigma_tensor, model_kwargs)
+                # denoised = denoiser(x, sigma_hat * s_in, local_cond, global_cond)
+                d = to_d(x, sigma_hat, denoised)
+                dt = sigmas[i + 1] - sigma_hat
+                if sigmas[i + 1] == 0:
+                    # Euler method
+                    x = x + d * dt
+                else:
+                    # Heun's method
+                    x_2 = x + d * dt
+                    sigma_tensor = th.tensor(sigmas[i + 1] * s_in, device=device)
+                    denoised_2 = self.model_edm(model, x, sigma_tensor, model_kwargs)
+                    # denoised_2 = denoiser(x_2, sigmas[i + 1] * s_in, local_cond, global_cond)
+                    d_2 = to_d(x_2, sigmas[i + 1], denoised_2)
+                    d_prime = (d + d_2) / 2
+                    x = x + d_prime * dt
+                out = {"sample": x, "pred_xstart": denoised_2}
                 yield out
-                img = out["sample"]
+        ################################################################################
+
+        else:
+            for i in indices:
+                t = th.tensor([i] * shape[0], device=device)
+                if randomize_class and 'y' in model_kwargs:
+                    model_kwargs['y'] = th.randint(low=0, high=model.num_classes,
+                                                size=model_kwargs['y'].shape,
+                                                device=model_kwargs['y'].device)
+                with th.no_grad():
+                    sample_fn = self.p_sample_with_grad if cond_fn_with_grad else self.p_sample
+                    out = sample_fn(
+                        model,
+                        img,
+                        t,
+                        clip_denoised=clip_denoised,
+                        denoised_fn=denoised_fn,
+                        cond_fn=cond_fn,
+                        model_kwargs=model_kwargs,
+                        const_noise=const_noise,
+                    )
+                    yield out
+                    img = out["sample"]
 
     def ddim_sample(
         self,
@@ -1251,7 +1342,11 @@ class GaussianDiffusion:
             model_kwargs = {}
         if noise is None:
             noise = th.randn_like(x_start)
-        x_t = self.q_sample(x_start, t, noise=noise)
+        # 0918 wonjae - noise addition in edm style(VE)
+        if self.edm:
+            x_t = self.q_sample_edm(x_start, t, noise=noise)
+        else:
+            x_t = self.q_sample(x_start, t, noise=noise)
 
         terms = {}
 
@@ -1267,7 +1362,12 @@ class GaussianDiffusion:
             if self.loss_type == LossType.RESCALED_KL:
                 terms["loss"] *= self.num_timesteps
         elif self.loss_type == LossType.MSE or self.loss_type == LossType.RESCALED_MSE:
-            model_output = model(x_t, self._scale_timesteps(t), **model_kwargs)
+            # 0919 wonjae model output scaling in edm style
+            if self.edm:
+                sigma_t = _extract_into_tensor(self.sigmas, t, t.shape)
+                model_output = self.model_edm(model, x_t, sigma_t, model_kwargs)
+            else:
+                model_output = model(x_t, self._scale_timesteps(t), **model_kwargs)
 
             if self.model_var_type in [
                 ModelVarType.LEARNED,
@@ -1590,6 +1690,26 @@ class GaussianDiffusion:
             "xstart_mse": xstart_mse,
             "mse": mse,
         }
+    
+    # 0918 wonjae - function to compute scalings
+    def get_scalings(self, sigma):
+        c_skip = self.sigma_data**2 / (sigma**2 + self.sigma_data**2)
+        c_out = sigma * self.sigma_data / (sigma**2 + self.sigma_data**2) ** 0.5
+        c_in = 1 / (sigma**2 + self.sigma_data**2) ** 0.5
+        return c_skip, c_out, c_in
+    
+    # 0918 wonjae - function to compute model output
+    def model_edm(self, model, x_t, sigma, model_kwargs):
+        c_skip, c_out, c_in = [
+            append_dims(x, x_t.ndim) for x in self.get_scalings(sigma)
+        ]
+        rescaled_t = 1000 * 0.25 * torch.log(sigma + 1e-44)
+        model_output = model(
+            c_in * x_t, rescaled_t, **model_kwargs
+        )
+        denoised = c_out * model_output + c_skip * x_t
+        return denoised
+
 
 
 def _extract_into_tensor(arr, timesteps, broadcast_shape):
@@ -1606,3 +1726,30 @@ def _extract_into_tensor(arr, timesteps, broadcast_shape):
     while len(res.shape) < len(broadcast_shape):
         res = res[..., None]
     return res.expand(broadcast_shape)
+
+
+# 0918 wonjae - function to compute sigma schedule
+# TODO delete hardcoded elements sigma min sigma max and rho
+def get_sigmas(num_diffusion_timesteps, sigma_min=0.002, sigma_max=80.0, rho=7.0):
+    min_inv_rho = sigma_min ** (1 / rho)
+    max_inv_rho = sigma_max ** (1 / rho)
+    ramp = np.linspace(1, 0, num_diffusion_timesteps)
+    sigmas = []
+    for i in ramp:
+        sigmas.append((max_inv_rho + i * (min_inv_rho - max_inv_rho)) ** rho)
+    return np.array(sigmas)
+
+# 0918 wonjae
+def append_dims(x, target_dims):
+    """Appends dimensions to the end of a tensor until it has target_dims dimensions."""
+    dims_to_append = target_dims - x.ndim
+    if dims_to_append < 0:
+        raise ValueError(
+            f"input has {x.ndim} dims but target_dims is {target_dims}, which is less"
+        )
+    return x[(...,) + (None,) * dims_to_append]
+
+# 0919 wonjae
+def to_d(x, sigma, denoised):
+    """Converts a denoiser output to a Karras ODE derivative."""
+    return (x - denoised) / append_dims(sigma, x.ndim)

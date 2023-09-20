@@ -84,6 +84,8 @@ class SpacedDiffusion(GaussianDiffusion):
                 last_alpha_cumprod = alpha_cumprod
                 self.timestep_map.append(i)
         kwargs["betas"] = np.array(new_betas)
+        # 0920 wonjae - add config
+        self.edm = kwargs["edm"]
         super().__init__(**kwargs)
 
     def p_mean_variance(
@@ -106,7 +108,9 @@ class SpacedDiffusion(GaussianDiffusion):
         if isinstance(model, _WrappedModel):
             return model
         return _WrappedModel(
-            model, self.timestep_map, self.rescale_timesteps, self.original_num_steps
+            model, self.timestep_map, self.rescale_timesteps, self.original_num_steps,
+            # 0920 wonjae
+            edm=self.edm
         )
 
     def _scale_timesteps(self, t):
@@ -115,15 +119,25 @@ class SpacedDiffusion(GaussianDiffusion):
 
 
 class _WrappedModel:
-    def __init__(self, model, timestep_map, rescale_timesteps, original_num_steps):
+    def __init__(self, model, timestep_map, rescale_timesteps, original_num_steps,
+                 # 0920 wonjae
+                 edm=False):
         self.model = model
         self.timestep_map = timestep_map
         self.rescale_timesteps = rescale_timesteps
         self.original_num_steps = original_num_steps
+        # 0920 wonjae
+        self.edm=edm
 
     def __call__(self, x, ts, **kwargs):
-        map_tensor = th.tensor(self.timestep_map, device=ts.device, dtype=ts.dtype)
-        new_ts = map_tensor[ts]
-        if self.rescale_timesteps:
-            new_ts = new_ts.float() * (1000.0 / self.original_num_steps)
-        return self.model(x, new_ts, **kwargs)
+        #0919 wonjae - delete map_tensor[ts] in order to get non-integer inputs for ts
+        #TODO revert this deletion to match original code
+        if not self.edm:
+            ##########
+            map_tensor = th.tensor(self.timestep_map, device=ts.device, dtype=ts.dtype)
+            new_ts = map_tensor[ts]
+            if self.rescale_timesteps:
+                new_ts = new_ts.float() * (1000.0 / self.original_num_steps)
+            ############
+            ts = new_ts
+        return self.model(x, ts, **kwargs)

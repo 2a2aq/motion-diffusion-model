@@ -5,13 +5,18 @@ import torch.nn.functional as F
 import clip
 from model.rotation2xyz import Rotation2xyz
 
+#0919 wonjae
+from diffusion.nn import timestep_embedding as continuous_embedding
+
 
 
 class MDM(nn.Module):
     def __init__(self, modeltype, njoints, nfeats, num_actions, translation, pose_rep, glob, glob_rot,
                  latent_dim=256, ff_size=1024, num_layers=8, num_heads=4, dropout=0.1,
                  ablation=None, activation="gelu", legacy=False, data_rep='rot6d', dataset='amass', clip_dim=512,
-                 arch='trans_enc', emb_trans_dec=False, clip_version=None, **kargs):
+                 arch='trans_enc', emb_trans_dec=False, clip_version=None,
+                 # 0920 wonjae - add config
+                 continuous_embed=False, **kargs):
         super().__init__()
 
         self.legacy = legacy
@@ -77,7 +82,7 @@ class MDM(nn.Module):
         else:
             raise ValueError('Please choose correct architecture [trans_enc, trans_dec, gru]')
 
-        self.embed_timestep = TimestepEmbedder(self.latent_dim, self.sequence_pos_encoder)
+        self.embed_timestep = TimestepEmbedder(self.latent_dim, self.sequence_pos_encoder, continuous_embed)
 
         if self.cond_mode != 'no_cond':
             if 'text' in self.cond_mode:
@@ -219,10 +224,14 @@ class PositionalEncoding(nn.Module):
 
 
 class TimestepEmbedder(nn.Module):
-    def __init__(self, latent_dim, sequence_pos_encoder):
+    def __init__(self, latent_dim, sequence_pos_encoder, 
+                 # 0920 wonjae - add config
+                 continuous_embed):
         super().__init__()
         self.latent_dim = latent_dim
         self.sequence_pos_encoder = sequence_pos_encoder
+        # 0920 wonjae - add config
+        self.continuous_embed = continuous_embed
 
         time_embed_dim = self.latent_dim
         self.time_embed = nn.Sequential(
@@ -231,9 +240,15 @@ class TimestepEmbedder(nn.Module):
             nn.Linear(time_embed_dim, time_embed_dim),
         )
 
+    # def forward(self, timesteps):
+        # return self.time_embed(self.sequence_pos_encoder.pe[timesteps]).permute(1, 0, 2)
+    # 0919 wonjae - change timestep embedding in order to get non-integer inputs for timesteps
+    #TODO revert this change in order to match original code
     def forward(self, timesteps):
+        if self.continuous_embed:
+            return self.time_embed(continuous_embedding(timesteps, self.latent_dim).unsqueeze(dim=1)).permute(1, 0, 2)
         return self.time_embed(self.sequence_pos_encoder.pe[timesteps]).permute(1, 0, 2)
-
+    
 
 class InputProcess(nn.Module):
     def __init__(self, data_rep, input_feats, latent_dim):
