@@ -65,6 +65,9 @@ def create_gaussian_diffusion(args):
 
     if not timestep_respacing:
         timestep_respacing = [steps]
+        # 0922 wonjae
+        if args.inference_step > 0:
+            timestep_respacing = [args.inference_step]
 
     return SpacedDiffusion(
         use_timesteps=space_timesteps(steps, timestep_respacing),

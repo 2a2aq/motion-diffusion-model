@@ -204,6 +204,9 @@ def add_evaluation_options(parser):
                             "full (a2m only) - 20 repetitions.")
     group.add_argument("--guidance_param", default=2.5, type=float,
                        help="For classifier-free sampling - specifies the s parameter, as defined in the paper.")
+    # 0922 wonjae
+    group.add_argument("--inference_step", default=-1, type=int, 
+                       help="number of inference_steps")
 
 
 def get_cond_mode(args):
