@@ -1350,6 +1350,8 @@ class GaussianDiffusion:
             #TODO - delete hardcoded values
             sigma_t = _extract_into_tensor(self.sigmas, t, t.shape)
             sigma_t = th.exp(th.add(th.randn_like(sigma_t).mul(1.2),-1.2))
+            # TODO add weights
+            # weights = get_weights()
             x_t = self.q_sample_edm(x_start, sigma_t, noise=noise)
         else:
             x_t = self.q_sample(x_start, t, noise=noise)
@@ -1760,3 +1762,9 @@ def append_dims(x, target_dims):
 def to_d(x, sigma, denoised):
     """Converts a denoiser output to a Karras ODE derivative."""
     return (x - denoised) / append_dims(sigma, x.ndim)
+
+# TODO add weights
+# # 0926 wonjae
+# def get_weights(x, sigma, sigma_data):
+#     "Calculate weights based on sigma value"
+#     sigma** -2 + sigma_data ** -2
