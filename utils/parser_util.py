@@ -110,6 +110,9 @@ def add_data_options(parser):
                        help="Dataset name (choose from list).")
     group.add_argument("--data_dir", default="", type=str,
                        help="If empty, will use defaults according to the specified dataset.")
+    # 1013 wonjae
+    group.add_argument("--joint_position", default=False, type=bool,
+                       help="whether to only use joint position in HumanML dataset")
 
 
 def add_training_options(parser):

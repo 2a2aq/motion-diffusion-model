@@ -136,6 +136,8 @@ class GaussianDiffusion:
         lambda_fc=0.,
         # 0920 wonjae - add config
         edm = False,
+        # 1011 wonjae - add config
+        joint_position = False
     ):
         self.model_mean_type = model_mean_type
         self.model_var_type = model_var_type
@@ -206,6 +208,8 @@ class GaussianDiffusion:
         # 0918 wonjae  TODO delete hardcoded feature
         self.edm = edm
         self.sigma_data = 0.5
+        # 1011 wonjae
+        self.joint_position = joint_position
 
     def masked_l2(self, a, b, mask):
         # assuming a.shape == b.shape == bs, J, Jdim, seqlen
@@ -729,6 +733,10 @@ class GaussianDiffusion:
         # TODO - delete hardcoded sigma_max
         if self.edm:
             img = img * 80.0
+
+        # 1011 wonjae - parse from image
+        if self.joint_position:
+            img = img[:,:67] #TODO delete hardcoded values
 
         if skip_timesteps and init_image is None:
             init_image = th.zeros_like(img)
@@ -1339,6 +1347,10 @@ class GaussianDiffusion:
                                              # jointstype='vertices',  # 3.4 iter/sec # USED ALSO IN MotionCLIP
                                              jointstype='smpl',  # 3.4 iter/sec
                                              vertstrans=False)
+
+        # 1011 wonjae - parse from image
+        if self.joint_position:
+            x_start = x_start[:,:enc.njoints]
 
         if model_kwargs is None:
             model_kwargs = {}

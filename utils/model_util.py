@@ -40,6 +40,12 @@ def get_model_args(args, data):
         data_rep = 'hml_vec'
         njoints = 251
         nfeats = 1
+    #1013 wonjae
+    if args.joint_position:
+        assert args.dataset == 'humanml'
+        data_rep = 'hml_vec'
+        njoints = 67
+        nfeats = 1
     
     return {'modeltype': '', 'njoints': njoints, 'nfeats': nfeats, 'num_actions': num_actions,
             'translation': True, 'pose_rep': 'rot6d', 'glob': True, 'glob_rot': True,
@@ -91,4 +97,6 @@ def create_gaussian_diffusion(args):
         lambda_fc=args.lambda_fc,
         # 0920 wonjae - add config
         edm = args.edm,
+        # 1013 wonjae - add config
+        joint_position = args.joint_position
     )
