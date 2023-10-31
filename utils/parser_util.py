@@ -101,6 +101,9 @@ def add_model_options(parser):
     # 0920 wonjae
     group.add_argument("--continuous_embed", default=False, type=bool, 
                        help="continuous time embedding model for EDM model")
+    # 1031 wonjae
+    group.add_argument("--vae_dim", default=0, type=int,
+                       help="latent dimension in VAE MDM model")
 
 
 

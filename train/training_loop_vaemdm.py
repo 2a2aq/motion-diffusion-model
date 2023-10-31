@@ -26,12 +26,15 @@ from data_loaders.get_data import get_dataset_loader
 INITIAL_LOG_LOSS_SCALE = 20.0
 
 
-class TrainLoop:
-    def __init__(self, args, train_platform, model, diffusion, data):
+class TrainLoop_VAEMDM:
+    def __init__(self, args, train_platform, model, vae_model, diffusion, data):
         self.args = args
         self.dataset = args.dataset
         self.train_platform = train_platform
         self.model = model
+        ########################################
+        self.vae_model = vae_model
+        ########################################
         self.diffusion = diffusion
         self.cond_mode = model.cond_mode
         self.data = data
@@ -287,6 +290,17 @@ class TrainLoop:
             micro_cond = cond
             last_batch = (i + self.microbatch) >= batch.shape[0]
             t, weights = self.schedule_sampler.sample(micro.shape[0], dist_util.dev())
+
+            ###################################### VAE Encode 1031 wonjae
+            bs, njoints, nfeats, nframes = micro.shape
+            micro = micro.reshape(bs, njoints*nfeats, nframes)
+            micro = micro.permute(0,2,1)
+            lengths = [len(feature) for feature in micro]
+            micro, _, _ = self.vae_model.encode(micro, lengths) #[nframes, bs, latent_dim]
+            micro = micro.permute(1,2,0) #[bs, latent_dim, nframes]
+            #TODO maybe it is better to explicitly use latent dim rather than infering from data
+            micro = micro.reshape(bs, -1, nfeats, nframes)
+            ######################################
 
             compute_losses = functools.partial(
                 self.diffusion.training_losses,

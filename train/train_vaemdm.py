@@ -8,7 +8,7 @@ import json
 from utils.fixseed import fixseed
 from utils.parser_util import train_args
 from utils import dist_util
-from train.training_loop import TrainLoop
+from train.training_loop_vaemdm import TrainLoop_VAEMDM
 from data_loaders.get_data import get_dataset_loader
 from utils.model_util import create_model_and_diffusion
 from train.train_platforms import (
@@ -16,6 +16,7 @@ from train.train_platforms import (
     TensorboardPlatform,
     NoPlatform,
 )  # required for the eval operation
+from model.vae import KLAutoEncoder
 
 
 def main():
@@ -46,13 +47,47 @@ def main():
     model, diffusion = create_model_and_diffusion(args, data)
     model.to(dist_util.dev())
     model.rot2xyz.smpl_model.eval()
+    ################################################################### 1031 wonjae
+    # SMPL defaults
+    njoints = 25
+    nfeats = 6
+
+    if args.dataset == 'humanml':
+        njoints = 263
+        nfeats = 1
+    elif args.dataset == 'kit':
+        njoints = 251
+        nfeats = 1
+    #1013 wonjae
+    if args.joint_position:
+        assert args.dataset == 'humanml'
+        njoints = 67
+        nfeats = 1
+
+    vae_model = KLAutoEncoder(device=args.device, 
+                          nfeats=njoints*nfeats,
+                          latent_dim=64, 
+                          num_heads=4, 
+                          num_layers=7, 
+                          ff_size=1024, 
+                          dropout=0.1).to(
+        args.device
+    )
+    #TODO delete hardcoded values
+    resume_checkpoint = '/home/vision02/ClonedRepo/motion-diffusion-model/save/vae_103011/model000000000.pt'
+    vae_model.load_state_dict(
+        dist_util.load_state_dict(
+            resume_checkpoint, map_location=dist_util.dev()
+        )
+    )
+    ###################################################################
 
     print(
         "Total params: %.2fM"
         % (sum(p.numel() for p in model.parameters_wo_clip()) / 1000000.0)
     )
     print("Training...")
-    TrainLoop(args, train_platform, model, diffusion, data).run_loop()
+    TrainLoop_VAEMDM(args, train_platform, model, vae_model, diffusion, data).run_loop()
     train_platform.close()
 
 

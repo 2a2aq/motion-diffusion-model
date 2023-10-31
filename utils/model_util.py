@@ -47,6 +47,11 @@ def get_model_args(args, data):
         njoints = 67
         nfeats = 1
     
+    ############################# 1031 wonjae - added code to insert vae latent dim
+    if args.vae_dim >0:
+        njoints = args.vae_dim
+    #############################
+    
     return {'modeltype': '', 'njoints': njoints, 'nfeats': nfeats, 'num_actions': num_actions,
             'translation': True, 'pose_rep': 'rot6d', 'glob': True, 'glob_rot': True,
             'latent_dim': args.latent_dim, 'ff_size': 1024, 'num_layers': args.layers, 'num_heads': 4,
