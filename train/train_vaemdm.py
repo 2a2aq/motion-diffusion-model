@@ -80,6 +80,8 @@ def main():
             resume_checkpoint, map_location=dist_util.dev()
         )
     )
+    for para in vae_model.parameters():
+         para.requires_grad = False
     ###################################################################
 
     print(

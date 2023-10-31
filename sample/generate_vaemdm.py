@@ -17,6 +17,7 @@ import data_loaders.humanml.utils.paramUtil as paramUtil
 from data_loaders.humanml.utils.plot_script import plot_3d_motion
 import shutil
 from data_loaders.tensors import collate
+from model.vae import KLAutoEncoder
 
 
 def main():
@@ -82,6 +83,44 @@ def main():
     print("Creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(args, data)
 
+    ################################################################### 1031 wonjae Load VAE
+    # SMPL defaults
+    njoints = 25
+    nfeats = 6
+
+    if args.dataset == 'humanml':
+        njoints = 263
+        nfeats = 1
+    elif args.dataset == 'kit':
+        njoints = 251
+        nfeats = 1
+    #1013 wonjae
+    if args.joint_position:
+        assert args.dataset == 'humanml'
+        njoints = 67
+        nfeats = 1
+
+    vae_model = KLAutoEncoder(device=args.device, 
+                          nfeats=njoints*nfeats,
+                          latent_dim=64, 
+                          num_heads=4, 
+                          num_layers=7, 
+                          ff_size=1024, 
+                          dropout=0.1).to(
+        args.device
+    )
+    #TODO delete hardcoded values
+    resume_checkpoint = '/home/vision02/ClonedRepo/motion-diffusion-model/save/vae_103011/model000000000.pt'
+    vae_model.load_state_dict(
+        dist_util.load_state_dict(
+            resume_checkpoint, map_location=dist_util.dev()
+        )
+    )
+    for para in vae_model.parameters():
+         para.requires_grad = False
+    vae_model.eval()
+    ###################################################################
+
     print(f"Loading checkpoints from [{args.model_path}]...")
     state_dict = torch.load(args.model_path, map_location="cpu")
     load_model_wo_clip(model, state_dict)
@@ -146,6 +185,31 @@ def main():
             noise=None,
             const_noise=False,
         )
+        ###############################
+        lengths=None
+        breakpoint()
+        ############################### VAE Encode 1031 wonjae -Only use in Raw diffusion models
+        # micro=sample
+        # bs, njoints, nfeats, nframes = micro.shape
+        # micro = micro.reshape(bs, njoints*nfeats, nframes)
+        # micro = micro.permute(0,2,1)
+        # lengths = [len(feature) for feature in micro]
+        # micro, _, _ = vae_model.encode(micro, lengths) #[nframes, bs, latent_dim]
+        # micro = micro.permute(1,2,0) #[bs, latent_dim, nframes]
+        # #TODO maybe it is better to explicitly use latent dim rather than infering from data
+        # micro = micro.reshape(bs, -1, nfeats, nframes)
+        ###############################
+        ############################### VAE Decode 1031 wonjae
+        bs, njoints, nfeats, nframes = micro.shape # bs, latent_dim, 1, nframes
+        micro = micro.reshape(bs, njoints*nfeats, nframes)
+        micro = micro.permute(0,2,1) # bs, nframes, latent_dim
+        if lengths is None:
+            lengths = [max_frames] * bs
+        micro = vae_model.decode(micro, lengths) #[nframes, bs, latent_dim]
+        micro = micro.permute(1,2,0) #[bs, latent_dim, nframes]
+        #TODO maybe it is better to explicitly use latent dim rather than infering from data
+        micro = micro.reshape(bs, -1, nfeats, nframes)
+        ###############################
 
         # Recover XYZ *positions* from HumanML3D vector representation
         if model.data_rep == "hml_vec":
